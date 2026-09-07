@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.clasprc.json
+.clasp.json
+credentials*.json
+secrets*.json
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
