@@ -55,14 +55,9 @@ function downloadNote_(path) {
   return {text: response.getContentText('UTF-8'), modified: metadata.server_modified};
 }
 
-function validDate_(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const d = new Date(value + 'T00:00:00Z');
-  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
 function parseTasks_(markdown) {
-  const tasks = [], warnings = [];
-  let category = '기타', fence = null, frontmatter = false;
+  const tasks = [];
+  let fence = null, frontmatter = false;
   markdown.replace(/^\uFEFF/, '').split(/\r?\n/).forEach(function(line, index) {
     if (index === 0 && line.trim() === '---') { frontmatter = true; return; }
     if (frontmatter) { if (/^(---|\.\.\.)$/.test(line.trim())) frontmatter = false; return; }
@@ -73,53 +68,18 @@ function parseTasks_(markdown) {
       return;
     }
     if (fence) return;
-    const heading = line.match(/^#{1,6}\s+(업무|개인)(?:\s*#*\s*)$/);
-    if (heading) category = heading[1];
-    else if (/^#{1,2}\s/.test(line)) category = '기타';
     const match = line.match(/^\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+?)\s*$/);
     if (!match) return;
-    const raw = match[1], dates = [...raw.matchAll(/📅\s*(\S+)/gu)].map(function(m) { return m[1]; });
-    const due = dates.length === 1 && validDate_(dates[0]) ? dates[0] : null;
-    if (dates.length && !due) warnings.push((index + 1) + '행: 마감일을 YYYY-MM-DD 하나로 적어주세요. 날짜 없는 일로 처리했습니다.');
-    tasks.push({text: raw, category: category, due: due, important: raw.includes('⭐'), line: index + 1});
+    tasks.push({text: match[1]});
   });
-  return {tasks: tasks, warnings: warnings};
-}
-function rank_(task, today) {
-  if (task.due && task.due < today) return 0;
-  if (task.due === today) return 1;
-  if (task.important) return 2;
-  return task.due ? 3 : 4;
-}
-function selectTasks_(tasks, today) {
-  const sorted = tasks.slice().sort(function(a, b) {
-    const delta = rank_(a, today) - rank_(b, today);
-    if (delta) return delta;
-    if ([0, 3].includes(rank_(a, today)) && a.due !== b.due) return a.due < b.due ? -1 : 1;
-    return a.line - b.line;
-  });
-  const top = sorted.slice(0, 3);
-  const rest = sorted.slice(3);
-  const deadlines = rest.filter(function(t) { return t.due && t.due <= today; });
-  const later = rest.filter(function(t) { return !t.due || t.due > today; });
-  return {top: top, deadlines: deadlines, next: later.slice(0, 5), remaining: Math.max(0, later.length - 5)};
+  return {tasks: tasks};
 }
 function buildDigest_(note, path, today) {
-  const parsed = parseTasks_(note.text), groups = selectTasks_(parsed.tasks, today);
-  const reasons = ['기한 초과', '오늘 마감', '중요 표시', '다가오는 마감', '노트 순서'];
-  const lines = [today + ' 오늘 할 일', '미완료 ' + parsed.tasks.length + '개', ''];
-  function section(title, items) {
-    if (!items.length) return;
-    lines.push(title);
-    items.forEach(function(t) { lines.push('• [' + t.category + '] ' + t.text + ' — ' + reasons[rank_(t, today)]); });
-    lines.push('');
-  }
-  if (!parsed.tasks.length) lines.push('등록된 미완료 할 일이 없습니다.', '');
-  section('오늘 우선할 일', groups.top);
-  section('추가 마감 확인', groups.deadlines);
-  section('이어서 할 일', groups.next);
-  if (groups.remaining) lines.push('그 외 ' + groups.remaining + '개는 노트에서 확인하세요.', '');
-  if (parsed.warnings.length) lines.push('기록 확인', ...parsed.warnings, '');
+  const parsed = parseTasks_(note.text);
+  const lines = [today + ' 오늘 할 일', '미완료 ' + parsed.tasks.length + '개', '', '남은 할 일'];
+  if (!parsed.tasks.length) lines.push('등록된 미완료 할 일이 없습니다.');
+  parsed.tasks.forEach(function(task) { lines.push('• ' + task.text); });
+  lines.push('');
   lines.push('노트 열기: https://www.dropbox.com/home' + path.split('/').map(encodeURIComponent).join('/'));
   const modified = new Date(note.modified);
   lines.push('Dropbox 마지막 수정: ' + (isNaN(modified.getTime()) ? '확인 불가' : Utilities.formatDate(modified, TZ, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)');

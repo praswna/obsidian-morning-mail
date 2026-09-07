@@ -11,22 +11,26 @@ function harness(hour = '0700') {
   vm.runInContext(source,context);
   return {state,c:context};
 }
-test('checkboxes, categories, completed and fenced examples',()=>{
-  const {c}=harness();const p=c.parseTasks_('---\nx: 1\n---\n## 업무\n- [ ] A\n- [x] B\n- [X] C\n```md\n- [ ] fake\n```\n## 개인\n  - [ ] D');
-  assert.equal(p.tasks.length,2);assert.equal(p.tasks[1].category,'개인');
+test('nested unchecked items only, excluding completed and fenced examples',()=>{
+  const {c}=harness();const p=c.parseTasks_('---\nx: 1\n---\n## 업무\n- [ ] A\n- [x] B\n- [X] C\n~~~md\n- [ ] fake\n~~~\n## 개인\n  - [ ] D');
+  assert.deepEqual(Array.from(p.tasks,t=>t.text),['A','D']);
 });
-test('valid dates, leap years and warnings',()=>{
-  const {c}=harness();assert.equal(c.validDate_('2026-02-29'),false);assert.equal(c.validDate_('2028-02-29'),true);
-  const p=c.parseTasks_('- [ ] A 📅 2026-02-30\n- [ ] B 📅 2026-09-10 📅 2026-09-11');assert.equal(p.warnings.length,2);assert.equal(p.tasks[0].due,null);
+test('dates and stars remain plain text without affecting order',()=>{
+  const {c}=harness();const text='- [ ] A\n- [ ] B 📅 2026-02-30\n- [ ] C ⭐\n- [ ] D 📅 2026-01-01';
+  const body=c.buildDigest_({text,modified:'bad'},'/x.md','2026-09-10').body;
+  assert.deepEqual(body.split('\n').filter(l=>l.startsWith('• ')),['• A','• B 📅 2026-02-30','• C ⭐','• D 📅 2026-01-01']);
+  assert.doesNotMatch(body,/기록 확인|기한 초과|오늘 마감|중요 표시|노트 순서|이어서 할 일|오늘 우선할 일|\[기타\]|\[업무\]/);
 });
-test('priority order, date order and no duplicated sections',()=>{
-  const {c}=harness();const p=c.parseTasks_('- [ ] no date\n- [ ] future 📅 2026-10-01\n- [ ] star ⭐\n- [ ] today 📅 2026-09-10\n- [ ] late 📅 2026-09-09\n- [ ] older 📅 2026-09-08\n- [ ] today2 📅 2026-09-10');
-  const g=c.selectTasks_(p.tasks,'2026-09-10');assert.deepEqual(Array.from(g.top,t=>t.line),[6,5,4]);assert.equal(g.deadlines.length,1);assert.equal(g.next[0].important,true);
-  assert.equal(new Set([...g.top,...g.deadlines,...g.next].map(t=>t.line)).size,7);
+test('all tasks included with no top-three or five-item limit',()=>{
+  const {c}=harness();const text=Array.from({length:20},(_,i)=>'- [ ] task '+i).join('\n');
+  const digest=c.buildDigest_({text,modified:'bad'},'/x.md','2026-09-10');
+  assert.deepEqual(digest.body.split('\n').filter(l=>l.startsWith('• ')),Array.from({length:20},(_,i)=>'• task '+i));
+  assert.match(digest.subject,/미완료 20개/);assert.equal(digest.body.split('남은 할 일').length,2);
 });
-test('empty note and remaining count',()=>{
-  const {c}=harness();assert.match(c.buildDigest_({text:'',modified:'bad'},'/x.md','2026-09-10').body,/등록된 미완료/);
-  const g=c.selectTasks_(c.parseTasks_(Array.from({length:12},(_,i)=>'- [ ] task '+i).join('\n')).tasks,'2026-09-10');assert.equal(g.next.length,5);assert.equal(g.remaining,4);
+test('empty or fully completed note',()=>{
+  const {c}=harness();for(const text of ['', '- [x] done']) {
+    const digest=c.buildDigest_({text,modified:'bad'},'/x.md','2026-09-10');assert.match(digest.body,/등록된 미완료/);assert.match(digest.subject,/미완료 0개/);
+  }
 });
 test('before 07:00 performs no network calls or sends',()=>{
   const {c,state}=harness('0659');c.scheduledDigest();assert.equal(state.calls.length,0);assert.equal(state.mails.length,0);
