@@ -92,4 +92,30 @@ test('manual HTML test leaves daily state and schedule untouched',()=>{
   assert.match(state.mails[0].htmlBody,/<!doctype html>/);
   assert.equal(JSON.stringify(state.properties),before);assert.equal(state.triggers.length,0);
 });
+test('ordinary parent lists, headings and nested tasks retain order and count',()=>{
+  const {c}=harness();
+  const text='## 개인\n- 생활비\n  - [ ] [[고용보험]]\n    - [ ] 신청\n  - [x] 완료\n- **학습**\n  1. 자료 읽기';
+  const parsed=c.parseTasks_(text);
+  assert.equal(parsed.tasks.length,2);
+  assert.deepEqual(Array.from(parsed.items,i=>i.text),['개인','생활비','[[고용보험]]','신청','**학습**','자료 읽기']);
+  const digest=c.buildDigest_({text,modified:'bad'},'/x.md','2026-09-10');
+  assert.match(digest.subject,/미완료 2개/);
+  assert.match(digest.body,/생활비\n  • 고용보험\n    • 신청/);
+  assert.match(digest.htmlBody,/<strong>학습<\/strong>/);
+  assert.match(digest.htmlBody,/>1\.<\/td>/);
+  assert.equal((digest.htmlBody.match(/&#9633;/g)||[]).length,2);
+});
+test('ordinary-only notes and fenced examples do not inflate unfinished count',()=>{
+  const {c}=harness();
+  const digest=c.buildDigest_({text:'- 메모\n  - 설명\n```\n- 예제\n```',modified:'bad'},'/x.md','2026-09-10');
+  assert.match(digest.subject,/미완료 0개/);assert.match(digest.htmlBody,/메모/);
+  assert.match(digest.htmlBody,/설명/);assert.doesNotMatch(digest.htmlBody,/예제/);
+});
+test('inline Markdown supports safe links and escapes active content',()=>{
+  const {c}=harness();
+  const html=c.inlineHtml_('**굵게** *기울임* ~~취소~~ `코드` [사이트](https://example.com) [위험](javascript:alert) <script>');
+  assert.match(html,/<strong>굵게<\/strong>/);assert.match(html,/<em>기울임<\/em>/);
+  assert.match(html,/<del>취소<\/del>/);assert.match(html,/href="https:\/\/example.com"/);
+  assert.doesNotMatch(html,/href="javascript:|<script>/);assert.match(html,/&lt;script&gt;/);
+});
 console.log(passed + ' tests passed; no real network or email used.');

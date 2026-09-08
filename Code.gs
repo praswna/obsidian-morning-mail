@@ -57,6 +57,7 @@ function downloadNote_(path) {
 
 function parseTasks_(markdown) {
   const tasks = [];
+  const items = [];
   let fence = null, frontmatter = false;
   markdown.replace(/^\uFEFF/, '').split(/\r?\n/).forEach(function(line, index) {
     if (index === 0 && line.trim() === '---') { frontmatter = true; return; }
@@ -68,14 +69,21 @@ function parseTasks_(markdown) {
       return;
     }
     if (fence) return;
-    const match = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+?)\s*$/);
+    const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { items.push({text: heading[2], indent: 0, kind: 'heading', level: heading[1].length}); return; }
+    const match = line.match(/^([ \t]*)([-*+]|\d+[.)])\s+(.+?)\s*$/);
     if (!match) return;
     const indent = match[1].split('').reduce(function(column, c) {
       return column + (c === '\t' ? 4 - column % 4 : 1);
     }, 0);
-    tasks.push({text: match[2], indent: indent});
+    const checkbox = match[3].match(/^\[([^\]])\](?:\s+(.*)|$)/);
+    if (checkbox && checkbox[1] !== ' ') return;
+    const item = {text: checkbox ? (checkbox[2] || '') : match[3], indent: indent,
+      kind: checkbox ? 'task' : 'list', marker: /^\d/.test(match[2]) ? match[2] : '•'};
+    items.push(item);
+    if (checkbox) tasks.push(item);
   });
-  return {tasks: tasks};
+  return {tasks: tasks, items: items};
 }
 function taskLabel_(text) {
   return text.replace(/\[\[([^\]\n]+)\]\]/g, function(_, target) {
@@ -88,24 +96,46 @@ function escapeHtml_(text) {
     return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
   });
 }
+// Render a small, safe Markdown subset; never execute raw HTML from the note.
+function inlineHtml_(text) {
+  const tokens = /(`[^`]+`|\[\[[^\]\n]+\]\]|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\*[^*]+\*)/g;
+  let result = '', offset = 0, match;
+  while ((match = tokens.exec(text)) !== null) {
+    result += escapeHtml_(text.slice(offset, match.index));
+    const token = match[0];
+    if (token[0] === '`') result += '<code style="background:#f1f5f9;padding:2px 4px;">' + escapeHtml_(token.slice(1, -1)) + '</code>';
+    else if (token.startsWith('[[')) result += escapeHtml_(taskLabel_(token));
+    else if (token[0] === '[') {
+      const link = token.match(/^\[([^\]]+)\]\((.+)\)$/);
+      result += '<a style="color:#7c3aed;" href="' + escapeHtml_(link[2]) + '">' + escapeHtml_(link[1]) + '</a>';
+    } else {
+      const tag = token.startsWith('~~') ? 'del' : token.startsWith('**') || token.startsWith('__') ? 'strong' : 'em';
+      const size = tag === 'em' ? 1 : 2;
+      result += '<' + tag + '>' + escapeHtml_(token.slice(size, -size)) + '</' + tag + '>';
+    }
+    offset = tokens.lastIndex;
+  }
+  return result + escapeHtml_(text.slice(offset));
+}
 function buildDigest_(note, path, today) {
   const parsed = parseTasks_(note.text);
   const lines = [today + ' 오늘 할 일', '미완료 ' + parsed.tasks.length + '개', '', '남은 할 일'];
   if (!parsed.tasks.length) lines.push('등록된 미완료 할 일이 없습니다.');
-  parsed.tasks.forEach(function(task) { lines.push(' '.repeat(task.indent) + '• ' + taskLabel_(task.text)); });
+  parsed.items.forEach(function(task) { lines.push(' '.repeat(task.indent) + (task.kind === 'heading' ? '' : task.marker + ' ') + taskLabel_(task.text)); });
   lines.push('');
   lines.push('노트 열기: https://www.dropbox.com/home' + path.split('/').map(encodeURIComponent).join('/'));
   const modified = new Date(note.modified);
   lines.push('Dropbox 마지막 수정: ' + (isNaN(modified.getTime()) ? '확인 불가' : Utilities.formatDate(modified, TZ, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)');
   lines.push('마지막 수정 시각은 현재 동기화 상태를 보장하지 않습니다.');
   const noteUrl = 'https://www.dropbox.com/home' + path.split('/').map(encodeURIComponent).join('/');
-  const rows = parsed.tasks.map(function(task) {
+  const rows = parsed.items.map(function(task) {
+    if (task.kind === 'heading') return '<tr><td style="padding:20px 16px 8px;font-weight:bold;font-size:' + (24 - task.level) + 'px;">' + inlineHtml_(task.text) + '</td></tr>';
     // Inline styles and tables work without scripts or external styles in email clients.
     const inset = 16 + Math.min(task.indent * 8, 96);
     return '<tr><td style="padding:12px 16px 12px ' + inset + 'px;border-bottom:1px solid #e8edf2;">' +
       '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>' +
-      '<td width="24" valign="top" style="color:#8795a5;">&#9633;</td>' +
-      '<td style="overflow-wrap:anywhere;word-break:break-word;">' + escapeHtml_(taskLabel_(task.text)) + '</td>' +
+      '<td width="24" valign="top" style="color:#8795a5;">' + (task.kind === 'task' ? '&#9633;' : escapeHtml_(task.marker)) + '</td>' +
+      '<td style="overflow-wrap:anywhere;word-break:break-word;">' + inlineHtml_(task.text) + '</td>' +
       '</tr></table></td></tr>';
   }).join('');
   const htmlBody = '<!doctype html><html lang="ko"><head><meta charset="UTF-8">' +
