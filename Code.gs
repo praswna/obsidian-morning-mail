@@ -134,6 +134,14 @@ function previewDigest() {
   console.log(digest.subject + '\n\n' + digest.body);
   return digest;
 }
+// Manual test only. Does not change the daily attempt or schedule.
+function sendTestDigest() {
+  const cfg = config_();
+  const digest = buildDigest_(downloadNote_(cfg.path), cfg.path, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'));
+  if (!digest.htmlBody) throw new Error('HTML 본문이 없습니다. 프로젝트의 중복 Code.gs 또는 buildDigest_ 함수를 확인하세요.');
+  MailApp.sendEmail({to: cfg.recipient, subject: '[테스트 HTML v2] ' + digest.subject,
+    body: digest.body, htmlBody: digest.htmlBody, name: '아침 할 일'});
+}
 function scheduledDigest() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return;

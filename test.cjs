@@ -84,4 +84,12 @@ test('scheduled email includes HTML and plain fallback; errors stay plain',()=>{
   const failed=harness();failed.state.failRead=true;failed.c.scheduledDigest();
   assert.equal(failed.state.mails[0].htmlBody,undefined);
 });
+test('manual HTML test leaves daily state and schedule untouched',()=>{
+  const {c,state}=harness();state.properties.LAST_ATTEMPT_DATE='2026-09-10';
+  state.properties.LAST_STATUS='sent';const before=JSON.stringify(state.properties);
+  c.sendTestDigest();assert.equal(state.mails.length,1);
+  assert.match(state.mails[0].subject,/^\[테스트 HTML v2\]/);
+  assert.match(state.mails[0].htmlBody,/<!doctype html>/);
+  assert.equal(JSON.stringify(state.properties),before);assert.equal(state.triggers.length,0);
+});
 console.log(passed + ' tests passed; no real network or email used.');
