@@ -68,23 +68,63 @@ function parseTasks_(markdown) {
       return;
     }
     if (fence) return;
-    const match = line.match(/^\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+?)\s*$/);
+    const match = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])\s+\[ \]\s+(.+?)\s*$/);
     if (!match) return;
-    tasks.push({text: match[1]});
+    const indent = match[1].split('').reduce(function(column, c) {
+      return column + (c === '\t' ? 4 - column % 4 : 1);
+    }, 0);
+    tasks.push({text: match[2], indent: indent});
   });
   return {tasks: tasks};
+}
+function taskLabel_(text) {
+  return text.replace(/\[\[([^\]\n]+)\]\]/g, function(_, target) {
+    const parts = target.split('|');
+    return parts[parts.length - 1];
+  });
+}
+function escapeHtml_(text) {
+  return String(text).replace(/[&<>"']/g, function(c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
 }
 function buildDigest_(note, path, today) {
   const parsed = parseTasks_(note.text);
   const lines = [today + ' 오늘 할 일', '미완료 ' + parsed.tasks.length + '개', '', '남은 할 일'];
   if (!parsed.tasks.length) lines.push('등록된 미완료 할 일이 없습니다.');
-  parsed.tasks.forEach(function(task) { lines.push('• ' + task.text); });
+  parsed.tasks.forEach(function(task) { lines.push(' '.repeat(task.indent) + '• ' + taskLabel_(task.text)); });
   lines.push('');
   lines.push('노트 열기: https://www.dropbox.com/home' + path.split('/').map(encodeURIComponent).join('/'));
   const modified = new Date(note.modified);
   lines.push('Dropbox 마지막 수정: ' + (isNaN(modified.getTime()) ? '확인 불가' : Utilities.formatDate(modified, TZ, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)');
   lines.push('마지막 수정 시각은 현재 동기화 상태를 보장하지 않습니다.');
-  return {subject: '[오늘 할 일] ' + today + ' · 미완료 ' + parsed.tasks.length + '개', body: lines.join('\n')};
+  const noteUrl = 'https://www.dropbox.com/home' + path.split('/').map(encodeURIComponent).join('/');
+  const rows = parsed.tasks.map(function(task) {
+    // Inline styles and tables work without scripts or external styles in email clients.
+    const inset = 16 + Math.min(task.indent * 8, 96);
+    return '<tr><td style="padding:12px 16px 12px ' + inset + 'px;border-bottom:1px solid #e8edf2;">' +
+      '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>' +
+      '<td width="24" valign="top" style="color:#8795a5;">&#9633;</td>' +
+      '<td style="overflow-wrap:anywhere;word-break:break-word;">' + escapeHtml_(taskLabel_(task.text)) + '</td>' +
+      '</tr></table></td></tr>';
+  }).join('');
+  const htmlBody = '<!doctype html><html lang="ko"><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"></head>' +
+    '<body style="margin:0;padding:0;background:#f3f5f8;color:#243247;font-family:Arial,\'Malgun Gothic\',sans-serif;font-size:16px;line-height:1.65;">' +
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:24px 12px;">' +
+    '<table role="presentation" width="100%" align="center" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;">' +
+    '<tr><td style="padding:28px 24px 20px;border-bottom:1px solid #e2e8f0;">' +
+    '<div style="font-size:13px;color:#64748b;">' + escapeHtml_(today) + ' · 아침 할 일</div>' +
+    '<h1 style="margin:6px 0 12px;font-size:26px;line-height:1.35;">오늘 할 일</h1>' +
+    '<span style="color:#1d4ed8;background:#eff6ff;padding:5px 10px;border-radius:6px;font-size:14px;">미완료 ' + parsed.tasks.length + '개</span></td></tr>' +
+    '<tr><td style="padding:20px 8px;"><h2 style="margin:0 16px 8px;font-size:16px;">남은 할 일</h2>' +
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0">' +
+    (rows || '<tr><td style="padding:20px 16px;color:#64748b;">등록된 미완료 할 일이 없습니다.</td></tr>') +
+    '</table></td></tr><tr><td style="padding:4px 24px 28px;">' +
+    '<a href="' + escapeHtml_(noteUrl) + '" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:bold;">Dropbox에서 노트 열기</a>' +
+    '<p style="margin:18px 0 0;color:#64748b;font-size:12px;">' + escapeHtml_(lines[lines.length - 2]) +
+    '<br>' + escapeHtml_(lines[lines.length - 1]) + '</p></td></tr></table></td></tr></table></body></html>';
+  return {subject: '[오늘 할 일] ' + today + ' · 미완료 ' + parsed.tasks.length + '개', body: lines.join('\n'), htmlBody: htmlBody};
 }
 
 // Read and render only. No email or trigger is created. Task text appears in execution logs.
@@ -112,7 +152,9 @@ function scheduledDigest() {
     // At-most-once attempt: an ambiguous delivery failure is not automatically retried.
     props_().setProperties({LAST_ATTEMPT_DATE: today, LAST_STATUS: 'sending'});
     try {
-      MailApp.sendEmail({to: cfg.recipient, subject: digest.subject, body: digest.body, name: '아침 할 일'});
+      const message = {to: cfg.recipient, subject: digest.subject, body: digest.body, name: '아침 할 일'};
+      if (digest.htmlBody) message.htmlBody = digest.htmlBody;
+      MailApp.sendEmail(message);
       props_().setProperty('LAST_STATUS', 'sent');
     } catch (error) {
       props_().setProperty('LAST_STATUS', 'delivery_uncertain');

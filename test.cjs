@@ -57,4 +57,31 @@ test('installation replaces only owned trigger and sends nothing',()=>{
 test('multiple recipients rejected',()=>{
   const {c,state}=harness();state.properties.RECIPIENT_EMAIL='a@example.com,b@example.com';assert.throws(()=>c.config_());
 });
+test('spaces, tabs and completed parents preserve source indentation',()=>{
+  const {c}=harness();
+  const text='- [ ] Parent\n  - [ ] Child\n\t- [ ] Tab child\n- [x] Completed\n    - [ ] Still pending';
+  assert.deepEqual(Array.from(c.parseTasks_(text).tasks,t=>t.indent),[0,2,4,4]);
+  const digest=c.buildDigest_({text,modified:'bad'},'/x.md','2026-09-10');
+  assert.match(digest.body,/\n  • Child\n    • Tab child/);
+  assert.match(digest.htmlBody,/padding:12px 16px 12px 32px/);
+  assert.match(digest.htmlBody,/padding:12px 16px 12px 48px/);
+  assert.doesNotMatch(digest.htmlBody,/Completed/);
+});
+test('HTML escapes note content and displays wiki aliases without markup',()=>{
+  const {c}=harness();
+  const digest=c.buildDigest_({text:'- [ ] [[노트|표시 이름]] <img src=x onerror="bad()"> & 확인',modified:'bad'},'/한글/할 일.md','2026-09-10');
+  assert.match(digest.htmlBody,/표시 이름 &lt;img/);
+  assert.doesNotMatch(digest.htmlBody,/<img|\[\[/);
+  assert.match(digest.body,/• 표시 이름 <img/);
+  assert.match(digest.htmlBody,/href="https:\/\/www.dropbox.com\/home\/%ED%95%9C%EA%B8%80\//);
+  const empty=c.buildDigest_({text:'- [x] done',modified:'bad'},'/x.md','2026-09-10');
+  assert.match(empty.htmlBody,/등록된 미완료 할 일이 없습니다/);
+});
+test('scheduled email includes HTML and plain fallback; errors stay plain',()=>{
+  const {c,state}=harness();c.scheduledDigest();
+  assert.match(state.mails[0].htmlBody,/오늘 할 일/);
+  assert.match(state.mails[0].body,/• 보고서/);
+  const failed=harness();failed.state.failRead=true;failed.c.scheduledDigest();
+  assert.equal(failed.state.mails[0].htmlBody,undefined);
+});
 console.log(passed + ' tests passed; no real network or email used.');
